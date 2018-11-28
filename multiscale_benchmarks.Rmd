@@ -1,0 +1,383 @@
+---
+title: "Multiscale Benchmarks"
+author: "Matt Piekenbrock"
+output: html_notebook
+---
+
+```{r}
+## Given an (nxd) matrix, produces a new matrix on the order of O(nd) of distinct 
+## nondecreasing combinations of the original matrix
+nondecreasing_matrix <- function(mat){
+  n <- nrow(mat)
+  d <- ncol(mat)
+  idx <- rep(1, d)
+  res <- list()
+  while(any(idx < n)){
+    ## extract current row 
+    c_row <- sapply(seq(d), function(d_i){ mat[idx[d_i],d_i] })
+    
+    ## get index of next largest element 
+    min_idx <- which.min(ifelse(idx < n, c_row, Inf))
+    
+    ## Increase row
+    n_row <- sapply(seq(d), function(d_i){
+        mat[idx[d_i], d_i]
+    })
+    
+    ## append
+    res <- append(res, list(n_row))
+    
+    ## increment 
+    idx[min_idx] <- idx[min_idx] + 1
+  }
+  do.call(rbind, res)
+}
+
+## Benchmark
+## Given a function that returns a Mapper object and a list of discretizations
+bench_mapper <- function(mapper_f, g_card) {
+  lapply(g_card, function(degree){
+  
+    ## Get a new mapper
+    m <- mapper_f()
+    
+    ## Get the overlap values 
+    if (is.numeric(degree)){
+      ## How good of an approximation to the multiscale mapper is wanted
+      g <- replicate(ncol(m$cover$filter_values), seq(0, 50, length.out = degree))
+    } else if (degree == "exact"){
+      filter_rng <- apply(m$cover$filter_values, 2, range)
+      { filter_min <- filter_rng[1,]; filter_max <- filter_rng[2,] }
+      filter_len <- diff(filter_rng)
+      r_len <- filter_len/m$cover$number_intervals
+      d <- ncol(m$cover$filter_values)
+      g <- do.call(cbind, lapply(seq(d), function(d_i){
+        as.vector(1) - (as.vector(r_len[[d_i]])/m$multiscale$filt_dist[[d_i]])
+      }))
+      g <- g[apply(g, 1, function(g_i) all(g_i < 0.50)),,drop = FALSE]*100
+      g <- nondecreasing_matrix(g)
+    }
+    print("calculated g")
+  
+    ## Cumulative number of set / pairs need to be computed
+    cum_num_updates <- apply(g, 1, function(g_i){
+      print(g_i)
+      
+      ## Worst case -- no knowledge
+      worst_sets <- prod(m$cover$number_intervals)
+      worst_pairs <- choose(worst_sets, 2)
+      
+      ## Bounded case 
+      bounded_cover <- m$cover$clone()
+      bounded_cover$percent_overlap <- g_i
+      bounded_pairs <- nrow(bounded_cover$level_sets_to_compare())
+      
+      ## Our approach
+      tmp <- m$update_mapper(g_i, stats = TRUE)
+      indexed_sets <- length(tmp$updated_ls)
+      indexed_pairs <- nrow(tmp$updated_ls_pairs)
+      
+      list(
+        sets = list(worst_sets, indexed_sets),
+        pairs = list(worst_pairs, bounded_pairs, indexed_pairs)
+      )
+    })
+    
+    ## Accumulate the results
+    set_updates <- do.call(rbind, lapply(cum_num_updates, function(lst) lst$sets))
+    set_df <- data.frame(resolution=degree, apply(set_updates, 2, cumsum), percent_overlap=g)
+    pair_updates <- do.call(rbind, lapply(cum_num_updates, function(lst) lst$pairs))
+    pair_df <- data.frame(resolution=degree, apply(pair_updates, 2, cumsum), percent_overlap=g)
+    return(list(set_res = set_df, pair_res = pair_df))
+  })
+}
+```
+
+```{r}
+## Diabetes data from the original paper + KDE 
+data("chemdiab", package = "locfit")
+X <- apply(chemdiab[, 1:5], 2, function(x) scale(x, center = FALSE))
+f_kde <- ks::kde(X, H = diag(5), eval.points = X, verbose = FALSE)$estimate
+f_ecc <- apply(as.matrix(dist(X)), 1, max)
+
+## Diabetes mapper
+diab_mapper <- function(Z){
+  return(function(){
+    MapperRef$new(X = X)$
+      use_cover(filter_values = matrix(Z), typename = "fixed rectangular", number_intervals = 4L, percent_overlap = 0)$
+      use_distance_measure(measure = "euclidean")$
+      use_clustering_algorithm(cl = "single", num_bins = 15L)$
+      compute_k_skeleton(k = 1L)$
+      enable_multiscale() ## enables multiscale mapper
+  })
+}
+
+## Computes the mapper at the given discrete approximations. 'Exact' computes all poss
+g_card <- list(10, 50, "exact")
+diab_bench_kde <- do.call(rbind, bench_mapper(diab_mapper(f_kde), g_card))
+diab_bench_ecc <- do.call(rbind, bench_mapper(diab_mapper(f_ecc), g_card))
+saveRDS(diab_bench_kde, file = "diab_bench_kde.rds")
+saveRDS(diab_bench_ecc, file = "diab_bench_ecc.rds")
+```
+
+$k$-dimensional benchmarks
+```{r}
+## World Values Survey data
+library("Mapper")
+
+## World Values Survey 
+WV6_Data_R <- readRDS("WV6_Data_R_v_2016_01_01.rds")
+WV_US_survey <- data.table::data.table(WV6_Data_R)[V2 == 840]
+
+## Choose some interesting dimensions to consider. Feel free to swap these in and out based on your interests! 
+key_vals <- c(V4="FamilyImportance", V5="FriendImportance", V7="PoliticsImportance", V8="WorkImportance", 
+              V9="ReligionImportance", V10="Happiness", V11="Health", V23="Satisfied", V24="TrustInOthers", 
+              V25="ReligiousMember", V29="PoliticsMember", V30="EnvironMember", V32="CharityMember", 
+              V55="ControlOverLife", V56="TakeAdvantageOf", V57="MarriedStatus", V58="NumChildren", 
+              V59="FinancialSatisfaction", V60="CountryAimsFirstChoice", V61="CountryAimsSecondChoice", 
+              V67="FutureWorkEmphasis", V68="FutureTechnologyEmphasis", V69="FutureRespectAuthority", 
+              V84="InterestInPolitics", V95="PoliticalLeaning", V97="OwnershipOfBusiness", V98="BeliefInCompetition", 
+              V101="BeliefOnWealth")
+
+## Scale the data. This also recenters the responses to a common location. 
+WV_US.scaled <- apply(WV_US_survey[,.SD, .SDcols = names(key_vals)], 2, scale)
+colnames(WV_US.scaled) <- key_vals
+
+## Extract the most statistically independent components w/ ICA, and the first 3 principle components w/ PCA.
+wv_ica <- fastICA::fastICA(as.matrix(WV_US.scaled), n.comp=3, method = "C", alg.typ = "deflation", fun = "logcosh")
+wv_pca <- stats::prcomp(as.matrix(WV_US.scaled), center=FALSE, rank=3) ## equiv. to wv_ica$X %*% wv_ica$K
+
+## Use empirical distance-to-measure (DTM) to remove outliers
+detect_outliers <- function(X, percentile=0.99, k=15L){
+  knn <- RANN::nn2(X, k = k)
+  dtm <- rowSums(knn$nn.dist)/k
+  which(dtm >= quantile(dtm, c(percentile)))
+}
+ica_outliers <- detect_outliers(wv_ica$S, percentile = 0.95)
+pca_outliers <- detect_outliers(wv_pca$x, percentile = 0.95)
+
+## World Values Survey Mapper
+wvs_mapper <- function(X, Z){
+  return(function(){
+    m <- Mapper:::MapperRef$new(X)$
+      use_cover(filter_values=Z, type="fixed rectangular", number_intervals=5L, percent_overlap=0)$
+      use_distance_measure(measure = "euclidean")
+    # use_clustering_algorithm(cl = "single", num_bins = 10L)$ # For analysis 
+      m$clustering_algorithm <- function(X, idx, ...){ rep(1L, length(idx)) }
+      m$compute_k_skeleton(k = 1L)$
+      enable_multiscale() ## enables multiscale mapper
+  })
+}
+
+
+## Computes the mapper at the given discrete approximations. 'Exact' computes all poss
+g_card <- list(10, 100, "exact")
+wvs_ica_mapper_f <- wvs_mapper(as.matrix(WV_US.scaled)[-ica_outliers,], wv_ica$S[-ica_outliers,])
+wvs_pca_mapper_f <- wvs_mapper(as.matrix(WV_US.scaled)[-pca_outliers,], wv_pca$x[-pca_outliers,])
+wvs_bench_ica <- do.call(rbind, bench_mapper(wvs_ica_mapper_f, g_card))
+wvs_bench_pca <- do.call(rbind, bench_mapper(wvs_pca_mapper_f, g_card))
+saveRDS(wvs_bench_ica, file = "wvs_bench_ica.rds")
+saveRDS(wvs_bench_pca, file = "wvs_bench_pca.rds")
+```
+
+Torus example data set 
+```{r}
+# Rejection sampling method of sampling from a torus 
+# Code from "Sampling from A Manifold" by Diaconis, Holmes and Shahshahani
+# http://arxiv.org/pdf/1206.6913.pdf
+
+## Rejection-sampling of torus 
+reject <- function(n=100,r=0.5,R=1) {
+  xvec <- runif(n,0,2*pi)
+  yvec <- runif(n,0,1/pi)
+  fx <- (1+(r/R)*cos(xvec))/(2*pi)
+  xvec[yvec<fx]
+}
+
+## Torus in R^3
+M <- local({
+  n <- 10000L*2 ## number of points to sample 
+  R <- 6 ## distance from the center of interior tube to center of torus
+  r <- 3 ## radius of tube
+  p <- 4 ## transformed variable
+  q <- reject(n, r = r, R = R) ## use runif(n, min = 0, max = 2*p) for comparison
+  y <- runif(length(q), min = 0, max = 2*p)
+  cbind((R + r*cos(q))*cos(y), (R + r*cos(q))*sin(y), sin(q))
+})
+M <- apply(M, 2, scale) # rgl::plot3d(M) to see the point cloud
+
+## Apply a random rotation
+set.seed(1234)
+M.pad <- cbind(M, replicate(27L, rep(0L, nrow(M))))
+QR.norm <- qr(x = replicate(30, rnorm(30)))
+M_emb <- M.pad %*% QR.norm$qr
+```
+
+<!-- Loading a conda environment w/ umap-learn and scikit installed -->
+```{r, echo = FALSE, eval=TRUE}
+## Load UMAP using reticulate
+library("reticulate")
+reticulate::use_python(normalizePath("~/miniconda3/envs/XAI/bin/python3"), required = TRUE)
+reticulate::use_condaenv("XAI", required = TRUE)
+# sys <- import("sys")
+# cat(sys$version)
+# cat("\nPath: ", head(sys$path, 1))
+```
+
+Laplacian Eigenmaps and UMAP filters
+```{r}
+## Build the heated graph 
+M_emb.scale <- apply(M_emb, 2, scale)
+torus_dist <- parallelDist::parallelDist(M_emb.scale, method = "euclidean")
+sigma <- mean(apply(M_emb.scale, 2, stats::bw.SJ))
+torus_kernel <- exp(-(torus_dist/(sigma*10))) ## 10 might be the smallest, 25 is too large
+aff_matrix <- as.matrix(torus_kernel) ## Precompute the 'affinity' matrix
+# rgl::plot3d(M_emb, col = bin_color(aff_matrix[1,]))
+# rgl::texts3d(x = M_emb[1,1], y = M_emb[1,2], M_emb[1,3], texts = "1")
+
+## Do the Laplacian Eigenmap embedding
+sklearn <- import("sklearn")
+se <- sklearn$manifold$SpectralEmbedding(n_components = 2L, affinity = 'precomputed')
+torus_le <- se$fit_transform(aff_matrix)
+
+## Do the UMAP embedding
+umap <- import("umap") ## installed from pip via umap-learn module
+rot_k <- ceiling(log(nrow(M_emb))*3*sqrt(2)) ## Rule of thumb 
+nn <- RANN::nn2(M_emb, query = M_emb, k = rot_k)
+reducer <- umap$UMAP(n_components=2L, n_neighbors=as.integer(rot_k), 
+                     min_dist=0.65, metric = "euclidean")
+torus_umap <- reducer$fit_transform(M_emb)
+# rgl::plot3d(torus_umap)
+```
+
+```{r}
+## Torus Mapper
+torus_mapper <- function(Z, overlap){
+  function(){
+    m <- Mapper:::MapperRef$new(as.matrix(M_emb))$
+    use_cover(filter_values=Z, type="fixed rectangular", number_intervals=15L, percent_overlap=overlap)$
+    use_distance_measure(measure = "euclidean")
+    # use_clustering_algorithm(cl = "single", num_bins = 10L)$ # For analysis 
+    m$clustering_algorithm <- function(X, idx, ...){ rep(1L, length(idx)) }
+    m$compute_k_skeleton(k = 1L)$
+      enable_multiscale()
+  }
+}
+
+## Computes the mapper at the given discrete approximations. 'Exact' computes all poss
+g_card <- list(10, 100, "exact")
+torus_bench_le <- do.call(rbind, bench_mapper(torus_mapper(torus_le, 20), g_card))
+torus_bench_umap <- do.call(rbind, bench_mapper(torus_mapper(torus_umap, 15), g_card))
+saveRDS(torus_bench_le, file = "torus_bench_le.rds")
+saveRDS(torus_bench_umap, file = "torus_bench_umap.rds")
+```
+
+
+Put together all the data to make the results plot
+```{r}
+## Data formatting for ggplot
+format_data <- function(bench_res, type = c("set", "pair")){
+  bench_cols <- switch(type, 
+                       "set"=c("degree", "Naïve", "Indexed", "percent_overlap"), 
+                       "pair" = c("degree", "Naïve", "Bounded", "Indexed", "percent_overlap"))
+  bench_idx <- switch(type, "set"=2:3, "pair"=2:4)
+  colnames(bench_res) <- bench_cols
+  agg_res <- data.table::melt(bench_res, id.vars = c("degree", "percent_overlap"),
+                              measure.vars=colnames(bench_res)[bench_idx])
+  type <- sprintf("%s-%s", as.character(agg_res$variable), agg_res$degree)
+  bench_data <- data.frame(type, agg_res$percent_overlap, agg_res$value)
+  colnames(bench_data) <- c("approx_type", "percent_overlap", "counts")
+  bench_data[["method"]] <- agg_res$variable
+  bench_data[["approx_degree"]] <- agg_res$degree
+  bench_data[["counts"]] <- log(bench_data$counts + 1) ## Add 1 to remove -Inf when 0 are compared at start
+  return(bench_data)
+}
+normalize_overlap <- function(x, type=c("set", "pair")){
+  cc <- ifelse(type == "set", 4, 5)
+  if (ncol(x) == cc){ return(x) }
+  else {
+    normalize <- function(x){ (x - min(x))/(max(x) - min(x)) }
+    return(cbind(x[, 1:cc], normalize(apply(x[, cc:ncol(x)], 1, sum))))
+  }
+}
+diab_bench_ecc <- readRDS(file = "~/mapper/ignore/multiscale_demo/diab_bench_ecc.rds")
+diab_bench_kde <- readRDS(file = "~/mapper/ignore/multiscale_demo/diab_bench_kde.rds")
+wvs_bench_pca <- readRDS(file = "~/mapper/ignore/multiscale_demo/wvs_bench_pca.rds")
+wvs_bench_ica <- readRDS(file = "~/mapper/ignore/multiscale_demo/wvs_bench_ica.rds")
+torus_bench_le <- readRDS(file = "~/mapper/ignore/multiscale_demo/torus_bench_le.rds")
+torus_bench_umap <- readRDS(file = "~/mapper/ignore/multiscale_demo/torus_bench_umap.rds")
+
+## For d > 1, the sequence of overlaps is a vector, which in unamenable to plot as coordinate axis. 
+## However, the linear combination of the values in the sequence is monotonically increasing.
+type <- "pair"
+# type <- "set"
+type_idx <- ifelse(type=="set", 1L, 2L)
+fpairs_diab_ecc <- format_data(normalize_overlap(do.call(rbind, diab_bench_ecc[, type_idx]), type), type)
+fpairs_diab_kde <- format_data(normalize_overlap(do.call(rbind, diab_bench_kde[, type_idx]), type), type)
+fpairs_wvs_pca <- format_data(normalize_overlap(do.call(rbind, wvs_bench_pca[, type_idx]), type), type)
+fpairs_wvs_ica <- format_data(normalize_overlap(do.call(rbind, wvs_bench_ica[, type_idx]), type), type)
+fpairs_torus_le <- format_data(normalize_overlap(do.call(rbind, torus_bench_le[, type_idx]), type), type)
+fpairs_torus_umap <- format_data(normalize_overlap(do.call(rbind, torus_bench_umap[, type_idx]), type), type)
+
+
+## Double legend line plot showing multiple groups 
+make_line_plot <- function(x, title, sub_title){
+  library("ggplot2")
+  library("viridis")
+  ## The fill aesthetic is dummy-group used to create two legends, because ggplot has a poorly designed interface.
+  # y_breaks <- with(x, { seq(min(pairs), max(pairs)+0.5, by = 0.5) })
+  # legend_title2 <- expression(paste(n^th, "-approximation:")
+  legend_title2 <- "Approximation:"
+  y_breaks <- ceiling(with(x, { seq(0, max(counts), length.out = 8) }))
+  ggplot(data = x, aes(x=percent_overlap, group=approx_type, fill=approx_degree, color=method)) +
+  geom_line(mapping = aes(y=counts, linetype=approx_degree, color=method), size=0.70) + 
+  scale_linetype_manual(values=c("11", "twodash", "solid"), name=legend_title2) +
+  scale_color_viridis(discrete = TRUE, name = "Method:", begin = 0, end = 0.8) +
+  scale_y_continuous(breaks = y_breaks, position="left") + 
+  theme_bw() +
+  theme(legend.title = element_text(face="bold")) + 
+  xlab("Percent Overlap") + ylab(label = "Cum. # operations (log-scale)") + 
+  theme(axis.title=element_text(size=11))+
+  ggtitle(title, subtitle = as.expression(parse(text=sprintf("italic('%s')", sub_title)))) +
+  ## Legend Positions 
+  # Bottom right corner 
+  # theme(legend.position = c(0.98, 0.02), legend.direction = "vertical", legend.box = "horizontal",
+  #       legend.title = element_text(size=6), legend.text = element_text(size=5), legend.key.size = unit(0.4, "cm"),
+  #       legend.key.width=unit(0.8,"cm"), legend.box.margin = margin(0.025, 0.025, 0.025, 0.025, unit = "cm"),
+  #       legend.spacing.x = unit(0.05, "cm"), legend.justification = c(1, 0),
+  #       legend.box.background = element_rect(colour = "black"))
+  # Top, horiozontal
+  # theme(legend.position = "top", legend.direction = "horizontal", legend.box = "horizontal",
+  #   legend.title = element_text(size=8), legend.text = element_text(size=6), legend.key.size = unit(0.02, "pt"),
+  #   legend.key.width=unit(0.75,"pt"), legend.box.margin = margin(0.025, 0.025, 0.025, 0.025, unit = "pt"),
+  #   legend.spacing = unit(0.25, "pt"), legend.justification = c(1, 1), legend.box.spacing = unit(0, "pt"),
+  #   legend.box.background = element_rect(colour = "black"), legend.margin=margin(0.01, 0.03, 0.01, 0.03, unit = "pt"))
+  # Bottom, horizontal 
+  theme(legend.position = "bottom", legend.direction = "horizontal", legend.box = "horizontal",
+  legend.title = element_text(size=8), legend.text = element_text(size=6), 
+  legend.key.width = unit(19.5, "pt"), 
+  legend.box.margin = margin(1.5, 2.5, 1.5, 2.5, unit = "pt"),
+  legend.spacing = unit(2.25, "pt"), legend.justification = "center", legend.box.spacing = unit(5, "pt"),
+  legend.box.background = element_rect(colour = "black"), legend.margin=margin(1, 2, 1, 2, unit = "pt"))
+}
+data_names <- c("Miller-Reaves Chemical Diabetes data set", 
+                "World Values Survey data set", 
+                "Embedded Torus Synthetic data set")
+g1 <- make_line_plot(fpairs_diab_ecc, title = data_names[1], sub_title = "KDE filter (1D)")
+g2 <- make_line_plot(fpairs_diab_kde, title = data_names[1], sub_title = "Eccentricity filter (1D)")
+g3 <- make_line_plot(fpairs_wvs_pca, title = data_names[2], sub_title = "Principle Components filter (3D)")
+g4 <- make_line_plot(fpairs_wvs_ica, title = data_names[2], sub_title = "Independent Components filter (3D)")
+g5 <- make_line_plot(fpairs_torus_le, title = data_names[3], sub_title = "Laplacian Eigenmap filter (2D)")
+g6 <- make_line_plot(fpairs_torus_umap, title = data_names[3], sub_title = "UMAP filter (2D)")
+
+## Save as PDF, per SIAM and ACM recommendations 
+local({
+  { page_width <- 390; page_height <- 592 } ## LaTeX inner body page width/height
+  wh_ratio <- (page_height*0.33)/page_width ## To get figure aspect ratio to whatever percentage height of page
+  res <- 3 ## to increase/decrease resolution
+  { pt_width <- page_width*res; pt_height <- wh_ratio*pt_width } 
+  pdf(file = paste0(type, "_results.pdf"), width = pt_width/72, height = pt_height/72, compress = TRUE)
+  gridExtra::grid.arrange(g1, g3, g5, g2, g4, g6, nrow = 2, ncol = 3)
+  dev.off()
+})
+```
