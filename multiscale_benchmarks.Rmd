@@ -277,6 +277,7 @@ Put together all the data to make the results plot
 ```{r}
 ## Data formatting for ggplot
 format_data <- function(bench_res, type = c("set", "pair")){
+  require("data.table")
   bench_cols <- switch(type, 
                        "set"=c("degree", "Naïve", "Indexed", "percent_overlap"), 
                        "pair" = c("degree", "Naïve", "Bounded", "Indexed", "percent_overlap"))
@@ -300,17 +301,17 @@ normalize_overlap <- function(x, type=c("set", "pair")){
     return(cbind(x[, 1:cc], normalize(apply(x[, cc:ncol(x)], 1, sum))))
   }
 }
-diab_bench_ecc <- readRDS(file = "~/mapper/ignore/multiscale_demo/diab_bench_ecc.rds")
-diab_bench_kde <- readRDS(file = "~/mapper/ignore/multiscale_demo/diab_bench_kde.rds")
-wvs_bench_pca <- readRDS(file = "~/mapper/ignore/multiscale_demo/wvs_bench_pca.rds")
-wvs_bench_ica <- readRDS(file = "~/mapper/ignore/multiscale_demo/wvs_bench_ica.rds")
-torus_bench_le <- readRDS(file = "~/mapper/ignore/multiscale_demo/torus_bench_le.rds")
-torus_bench_umap <- readRDS(file = "~/mapper/ignore/multiscale_demo/torus_bench_umap.rds")
+diab_bench_ecc <- readRDS(file = "diab_bench_ecc.rds")
+diab_bench_kde <- readRDS(file = "diab_bench_kde.rds")
+wvs_bench_pca <- readRDS(file = "wvs_bench_pca.rds")
+wvs_bench_ica <- readRDS(file = "wvs_bench_ica.rds")
+torus_bench_le <- readRDS(file = "torus_bench_le.rds")
+torus_bench_umap <- readRDS(file = "torus_bench_umap.rds")
 
 ## For d > 1, the sequence of overlaps is a vector, which in unamenable to plot as coordinate axis. 
 ## However, the linear combination of the values in the sequence is monotonically increasing.
-type <- "pair"
-# type <- "set"
+#type <- "pair"
+type <- "set"
 type_idx <- ifelse(type=="set", 1L, 2L)
 fpairs_diab_ecc <- format_data(normalize_overlap(do.call(rbind, diab_bench_ecc[, type_idx]), type), type)
 fpairs_diab_kde <- format_data(normalize_overlap(do.call(rbind, diab_bench_kde[, type_idx]), type), type)
@@ -335,17 +336,20 @@ make_line_plot <- function(x, title, sub_title){
   scale_color_viridis(discrete = TRUE, name = "Method:", begin = 0, end = 0.8) +
   scale_y_continuous(breaks = y_breaks, position="left") + 
   theme_bw() +
-  theme(legend.title = element_text(face="bold")) + 
+  theme(legend.title = element_text(face="bold")) +
   xlab("Percent Overlap") + ylab(label = "Cum. # operations (log-scale)") + 
   theme(axis.title=element_text(size=11))+
   ggtitle(title, subtitle = as.expression(parse(text=sprintf("italic('%s')", sub_title)))) +
   ## Legend Positions 
   # Bottom right corner 
-  # theme(legend.position = c(0.98, 0.02), legend.direction = "vertical", legend.box = "horizontal",
-  #       legend.title = element_text(size=6), legend.text = element_text(size=5), legend.key.size = unit(0.4, "cm"),
-  #       legend.key.width=unit(0.8,"cm"), legend.box.margin = margin(0.025, 0.025, 0.025, 0.025, unit = "cm"),
-  #       legend.spacing.x = unit(0.05, "cm"), legend.justification = c(1, 0),
-  #       legend.box.background = element_rect(colour = "black"))
+  theme(legend.position = c(0.98, 0.02), legend.direction = "horizontal", legend.box = "vertical",
+        legend.title = element_text(size=8), legend.text = element_text(size=8),
+        legend.key.width=unit(19.5, "pt"), legend.box.margin = margin(1.5, 2.5, 1.5, 2.5, unit = "pt"), 
+        legend.justification = c(1, 0), legend.box.spacing = unit(0, "pt"),
+        legend.box.background = element_rect(fill = "white"),
+        legend.key = element_rect(color = 'white'),
+        legend.key.size = unit(0, 'lines'),
+        legend.key.height = unit(0, "pt"), legend.spacing = unit(1, "pt"))
   # Top, horiozontal
   # theme(legend.position = "top", legend.direction = "horizontal", legend.box = "horizontal",
   #   legend.title = element_text(size=8), legend.text = element_text(size=6), legend.key.size = unit(0.02, "pt"),
@@ -353,12 +357,12 @@ make_line_plot <- function(x, title, sub_title){
   #   legend.spacing = unit(0.25, "pt"), legend.justification = c(1, 1), legend.box.spacing = unit(0, "pt"),
   #   legend.box.background = element_rect(colour = "black"), legend.margin=margin(0.01, 0.03, 0.01, 0.03, unit = "pt"))
   # Bottom, horizontal 
-  theme(legend.position = "bottom", legend.direction = "horizontal", legend.box = "horizontal",
-  legend.title = element_text(size=8), legend.text = element_text(size=6), 
-  legend.key.width = unit(19.5, "pt"), 
-  legend.box.margin = margin(1.5, 2.5, 1.5, 2.5, unit = "pt"),
-  legend.spacing = unit(2.25, "pt"), legend.justification = "center", legend.box.spacing = unit(5, "pt"),
-  legend.box.background = element_rect(colour = "black"), legend.margin=margin(1, 2, 1, 2, unit = "pt"))
+  # theme(legend.position = "bottom", legend.direction = "horizontal", legend.box = "vertical",
+  # legend.title = element_text(size=9), legend.text = element_text(size=9), 
+  # legend.key.width = unit(19.5, "pt"), 
+  # legend.box.margin = margin(1.5, 2.5, 1.5, 2.5, unit = "pt"),
+  # legend.spacing = unit(2.25, "pt"), legend.justification = "center", legend.box.spacing = unit(5, "pt"),
+  # legend.box.background = element_rect(colour = "black"), legend.margin=margin(1, 2, 1, 2, unit = "pt"))
 }
 data_names <- c("Miller-Reaves Chemical Diabetes data set", 
                 "World Values Survey data set", 
@@ -374,7 +378,7 @@ g6 <- make_line_plot(fpairs_torus_umap, title = data_names[3], sub_title = "UMAP
 local({
   { page_width <- 390; page_height <- 592 } ## LaTeX inner body page width/height
   wh_ratio <- (page_height*0.33)/page_width ## To get figure aspect ratio to whatever percentage height of page
-  res <- 3 ## to increase/decrease resolution
+  res <- 2.5 ## to increase/decrease resolution
   { pt_width <- page_width*res; pt_height <- wh_ratio*pt_width } 
   pdf(file = paste0(type, "_results.pdf"), width = pt_width/72, height = pt_height/72, compress = TRUE)
   gridExtra::grid.arrange(g1, g3, g5, g2, g4, g6, nrow = 2, ncol = 3)

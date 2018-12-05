@@ -1,6 +1,6 @@
 # Indexed Mapper
 
-Source code for the method that is [described here](indexed_mapper.pdf). The method and results are ongoing research efforts! The actual source code is part of the [Mapper R package](https://github.com/peekxc/Mapper). Specifically, see the files: 
+Source code for the method that is [described here](https://peekxc.github.io/resources/indexed_mapper.pdf). The method and results are ongoing research efforts! The actual source code is part of the [Mapper R package](https://github.com/peekxc/Mapper). Specifically, see the files: 
 
 - src/MultiScale.xx
 - src/GridIndex.xx
